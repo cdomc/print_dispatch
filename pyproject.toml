@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "print-dispatch"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "pypdf>=4.0.0",
+  "pywin32>=306; platform_system=='Windows'",
+  "streamlit>=1.31.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.setuptools.package-dir]
+"" = "src"

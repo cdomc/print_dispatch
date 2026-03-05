@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# venv
+.venv/
+
+# OS / Editor
+.DS_Store
+.vscode/
+
+# Runtime artifacts
+*.log
+*.tmp
+*.lnk
+
+# Local app data
+data/
