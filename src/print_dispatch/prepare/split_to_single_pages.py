@@ -7,6 +7,15 @@ from pathlib import Path
 from pypdf import PdfReader, PdfWriter
 
 
+def _normalize_page_orientation(page):
+    """Rotate landscape source pages to portrait for deterministic print output."""
+    width = float(page.mediabox.width)
+    height = float(page.mediabox.height)
+    if width > height:
+        return page.rotate(90)
+    return page
+
+
 def split_pdf_to_single_pages(pdf_path: str | Path, temp_dir: str | Path) -> list[Path]:
     source = Path(pdf_path)
     target_dir = Path(temp_dir)
@@ -18,7 +27,7 @@ def split_pdf_to_single_pages(pdf_path: str | Path, temp_dir: str | Path) -> lis
     for idx, page in enumerate(reader.pages, start=1):
         out_path = target_dir / f"{source.stem}__p{idx:04d}.pdf"
         writer = PdfWriter()
-        writer.add_page(page)
+        writer.add_page(_normalize_page_orientation(page))
         with out_path.open("wb") as f:
             writer.write(f)
         generated_paths.append(out_path)
