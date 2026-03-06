@@ -84,3 +84,29 @@ def test_materialize_order_creates_dirs_copies_review_and_builds_manifest(tmp_pa
     loaded = load_manifest(manifest_path)
     assert len(loaded.review_items) == 2
     assert len(loaded.printable_pages) == 2
+
+
+def test_materialize_order_collects_uppercase_pdf_extension(tmp_path):
+    input_dir = tmp_path / "in_upper"
+    input_dir.mkdir(parents=True)
+    upper_pdf = input_dir / "RYSUNEK.PDF"
+    _make_pdf(upper_pdf, [(297, 420)])
+
+    persistent_dir = tmp_path / "persistent_upper"
+    manifest = Manifest(
+        order_id="order-upper",
+        received_time="2026-03-06 10:00:00",
+        source_type="MANUAL",
+        source_paths=[str(input_dir)],
+        source_ref="manual:20260306100000",
+        person="Ręczne",
+        topic="Upper",
+        copies_default=1,
+        persistent_dir=str(persistent_dir),
+        temp_dir=str(tmp_path / "temp_upper"),
+    )
+
+    result = materialize_order(manifest)
+
+    assert len(result.printable_pages) == 1
+    assert result.printable_pages[0].file_original_name == "RYSUNEK.PDF"

@@ -34,7 +34,7 @@ def _collect_pdf_files(source_paths: list[str]) -> list[Path]:
             files.append(path)
             continue
         if path.is_dir():
-            files.extend(sorted(p for p in path.rglob("*.pdf") if p.is_file()))
+            files.extend(sorted(p for p in path.rglob("*") if p.is_file() and p.suffix.lower() == ".pdf"))
     return sorted(files)
 
 
