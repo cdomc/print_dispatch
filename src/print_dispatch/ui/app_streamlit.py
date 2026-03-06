@@ -37,6 +37,13 @@ STATE_LABELS = {
     "WYDRUKOWANE": "Wydrukowane",
     "ZAKONCZONE": "Zakończone",
 }
+PREFER_297_OPTIONS = ["Ploter A", "Ploter E", "Tylko A", "Tylko E"]
+PREFER_297_MAP = {
+    "Ploter A": "PREFER_A",
+    "Ploter E": "PREFER_E",
+    "Tylko A": "ONLY_A",
+    "Tylko E": "ONLY_E",
+}
 
 
 def _now_str() -> str:
@@ -120,8 +127,12 @@ def _all_groups_completed(manifest: Manifest) -> bool:
     return bool(manifest.groups) and all(g.status == "COMPLETED" for g in manifest.groups)
 
 
-def _run_dispatch(manifest: Manifest, execution_mode: ExecutionMode) -> None:
-    build_groups(manifest, FakeQueueDepth({"Ploter_A_297mm": 0, "Ploter_E_297mm": 0}))
+def _run_dispatch(manifest: Manifest, execution_mode: ExecutionMode, prefer_297_label: str) -> None:
+    build_groups(
+        manifest,
+        FakeQueueDepth({"Ploter_A_297mm": 0, "Ploter_E_297mm": 0}),
+        prefer_297=PREFER_297_MAP.get(prefer_297_label, "PREFER_A"),
+    )
     commit_print(manifest, execution_mode=execution_mode)
     if _all_groups_completed(manifest):
         manifest.state = "WYDRUKOWANE"
@@ -133,7 +144,12 @@ def _manifest_for_details(manifest: Manifest) -> tuple[Manifest, bool]:
     if manifest.groups or not manifest.printable_pages:
         return manifest, False
     preview = deepcopy(manifest)
-    build_groups(preview, FakeQueueDepth({"Ploter_A_297mm": 0, "Ploter_E_297mm": 0}))
+    prefer_label = st.session_state.get(f"prefer-297-{manifest.order_id}", "Ploter A")
+    build_groups(
+        preview,
+        FakeQueueDepth({"Ploter_A_297mm": 0, "Ploter_E_297mm": 0}),
+        prefer_297=PREFER_297_MAP.get(prefer_label, "PREFER_A"),
+    )
     return preview, True
 
 
@@ -203,8 +219,9 @@ def _create_manual_order(
 
     materialize_order(manifest, manifest_path=_manifest_path(order_id))
     execution_mode = ExecutionMode(st.session_state.execution_mode)
+    prefer_label = st.session_state.get(f"prefer-297-{order_id}", "Ploter A")
     if auto_print and manifest.printable_pages and execution_mode == ExecutionMode.DRY_RUN:
-        _run_dispatch(manifest, execution_mode=execution_mode)
+        _run_dispatch(manifest, execution_mode=execution_mode, prefer_297_label=prefer_label)
     else:
         _persist_manifest(manifest)
 
@@ -306,12 +323,18 @@ def _render_order_card(manifest: Manifest) -> None:
                 ]
             )
         )
+        st.selectbox(
+            "Preferowany ploter (297)",
+            options=PREFER_297_OPTIONS,
+            key=f"prefer-297-{manifest.order_id}",
+        )
 
         if manifest.state in {"ZLECONE", "W_TRAKCIE"} and manifest.printable_pages:
             current_mode = ExecutionMode(st.session_state.execution_mode)
+            prefer_label = st.session_state.get(f"prefer-297-{manifest.order_id}", "Ploter A")
             if current_mode == ExecutionMode.DRY_RUN:
                 if st.button("Drukuj automatyczne", key=f"print-{manifest.order_id}"):
-                    _run_dispatch(manifest, execution_mode=current_mode)
+                    _run_dispatch(manifest, execution_mode=current_mode, prefer_297_label=prefer_label)
                     st.success("Wykonano plan automatyczny (DRY_RUN).")
                     st.rerun()
             else:
@@ -319,7 +342,7 @@ def _render_order_card(manifest: Manifest) -> None:
                     st.warning("Potwierdź REAL druk automatyczny")
                     col_r1, col_r2 = st.columns(2)
                     if col_r1.button("Potwierdź REAL druk", key=f"real-print-confirm-{manifest.order_id}"):
-                        _run_dispatch(manifest, execution_mode=current_mode)
+                        _run_dispatch(manifest, execution_mode=current_mode, prefer_297_label=prefer_label)
                         st.session_state.confirm_real_print_for = None
                         st.success("Wysłano druk w trybie REAL.")
                         st.rerun()

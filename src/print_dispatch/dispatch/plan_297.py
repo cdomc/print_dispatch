@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Literal
 
 from ..domain.models import Batch297, BatchPlan297, PrintablePage
 
 QUEUE_A_297 = "Ploter_A_297mm"
 QUEUE_E_297 = "Ploter_E_297mm"
+StartPrinter = Literal["Ploter_A_297mm", "Ploter_E_297mm"]
 
 
 def _sort_item_refs(printable_pages: Sequence[PrintablePage], item_refs: Sequence[int]) -> list[int]:
@@ -28,12 +30,13 @@ def plan_297_batches(
     qE: int,
     k: int = 5,
     start_batch_index: int = 1,
+    forced_start_printer: StartPrinter | None = None,
 ) -> BatchPlan297:
     if k <= 0:
         raise ValueError("k must be > 0")
 
     ordered_refs = _sort_item_refs(printable_pages, item_refs)
-    start_printer = QUEUE_A_297 if qA <= qE else QUEUE_E_297
+    start_printer = forced_start_printer or (QUEUE_A_297 if qA <= qE else QUEUE_E_297)
     other_printer = QUEUE_E_297 if start_printer == QUEUE_A_297 else QUEUE_A_297
 
     batches: list[Batch297] = []
