@@ -21,6 +21,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from print_dispatch.dispatch.build_groups import build_groups
+from print_dispatch.config import ExecutionMode
 from print_dispatch.dispatch.queue_depth import FakeQueueDepth
 from print_dispatch.domain.models import Manifest
 from print_dispatch.execute.executor import commit_print
@@ -59,6 +60,10 @@ def _init_state() -> None:
         st.session_state.show_manual_form = False
     if "confirm_delete_order_for" not in st.session_state:
         st.session_state.confirm_delete_order_for = None
+    if "confirm_real_print_for" not in st.session_state:
+        st.session_state.confirm_real_print_for = None
+    if "execution_mode" not in st.session_state:
+        st.session_state.execution_mode = ExecutionMode.DRY_RUN.value
 
 
 def _load_all_manifests() -> list[Manifest]:
@@ -115,9 +120,9 @@ def _all_groups_completed(manifest: Manifest) -> bool:
     return bool(manifest.groups) and all(g.status == "COMPLETED" for g in manifest.groups)
 
 
-def _run_dispatch(manifest: Manifest) -> None:
+def _run_dispatch(manifest: Manifest, execution_mode: ExecutionMode) -> None:
     build_groups(manifest, FakeQueueDepth({"Ploter_A_297mm": 0, "Ploter_E_297mm": 0}))
-    commit_print(manifest)
+    commit_print(manifest, execution_mode=execution_mode)
     if _all_groups_completed(manifest):
         manifest.state = "WYDRUKOWANE"
         manifest.state_timestamps["WYDRUKOWANE"] = _now_str()
@@ -197,8 +202,9 @@ def _create_manual_order(
     )
 
     materialize_order(manifest, manifest_path=_manifest_path(order_id))
-    if auto_print and manifest.printable_pages:
-        _run_dispatch(manifest)
+    execution_mode = ExecutionMode(st.session_state.execution_mode)
+    if auto_print and manifest.printable_pages and execution_mode == ExecutionMode.DRY_RUN:
+        _run_dispatch(manifest, execution_mode=execution_mode)
     else:
         _persist_manifest(manifest)
 
@@ -217,7 +223,7 @@ def _check_outlook() -> list[Manifest]:
 
 
 def _render_header_actions() -> None:
-    col_manual, col_outlook = st.columns([1, 1])
+    col_manual, col_outlook, col_mode = st.columns([1, 1, 1])
     if col_manual.button("Nowe zlecenie ręczne", use_container_width=True):
         st.session_state.show_manual_form = not st.session_state.show_manual_form
     if col_outlook.button("Sprawdź Outlook", use_container_width=True):
@@ -227,6 +233,15 @@ def _render_header_actions() -> None:
         else:
             st.info("Brak nowych zleceń Outlook.")
         st.rerun()
+    with col_mode:
+        mode_value = st.selectbox(
+            "Tryb wykonania",
+            options=[ExecutionMode.DRY_RUN.value, ExecutionMode.REAL.value],
+            index=0 if st.session_state.execution_mode == ExecutionMode.DRY_RUN.value else 1,
+            key="execution_mode",
+        )
+        if mode_value == ExecutionMode.REAL.value:
+            st.caption("REAL: wymagane dodatkowe potwierdzenie przed drukiem.")
 
 
 def _render_manual_intake() -> None:
@@ -293,10 +308,28 @@ def _render_order_card(manifest: Manifest) -> None:
         )
 
         if manifest.state in {"ZLECONE", "W_TRAKCIE"} and manifest.printable_pages:
-            if st.button("Drukuj automatyczne", key=f"print-{manifest.order_id}"):
-                _run_dispatch(manifest)
-                st.success("Wykonano plan automatyczny.")
-                st.rerun()
+            current_mode = ExecutionMode(st.session_state.execution_mode)
+            if current_mode == ExecutionMode.DRY_RUN:
+                if st.button("Drukuj automatyczne", key=f"print-{manifest.order_id}"):
+                    _run_dispatch(manifest, execution_mode=current_mode)
+                    st.success("Wykonano plan automatyczny (DRY_RUN).")
+                    st.rerun()
+            else:
+                if st.session_state.confirm_real_print_for == manifest.order_id:
+                    st.warning("Potwierdź REAL druk automatyczny")
+                    col_r1, col_r2 = st.columns(2)
+                    if col_r1.button("Potwierdź REAL druk", key=f"real-print-confirm-{manifest.order_id}"):
+                        _run_dispatch(manifest, execution_mode=current_mode)
+                        st.session_state.confirm_real_print_for = None
+                        st.success("Wysłano druk w trybie REAL.")
+                        st.rerun()
+                    if col_r2.button("Anuluj", key=f"real-print-cancel-{manifest.order_id}"):
+                        st.session_state.confirm_real_print_for = None
+                        st.rerun()
+                else:
+                    if st.button("Drukuj automatyczne", key=f"print-{manifest.order_id}"):
+                        st.session_state.confirm_real_print_for = manifest.order_id
+                        st.rerun()
 
         if a4_count > 0:
             if st.button("Otwórz A4_REVIEW", key=f"open-a4-{manifest.order_id}"):

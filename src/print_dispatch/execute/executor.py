@@ -11,6 +11,7 @@ from ..config import ExecutionMode
 from ..domain.models import ExecutionAttempt, Group, Manifest
 from ..logging_setup import build_submit_log_line, setup_dispatch_logger
 from .dry_run import DryRunSubmitter
+from .real_submitter import RealSubmitter
 
 PROFILE_EXECUTION_ORDER = {
     "P297_A3_STD": 1,
@@ -25,11 +26,6 @@ PROFILE_EXECUTION_ORDER = {
 class FrozenPlan:
     frozen_at: str
     group_ids: list[str]
-
-
-class RealSubmitter:
-    def submit_page(self, _page) -> None:
-        raise NotImplementedError("Real submitter will be added in later milestone.")
 
 
 def _group_sort_key(group: Group) -> tuple[int, str, str]:
@@ -76,7 +72,9 @@ def commit_print(
     if execution_mode == ExecutionMode.DRY_RUN:
         submitter = submitter or DryRunSubmitter()
     else:
-        submitter = submitter or RealSubmitter()
+        if manifest.temp_dir is None:
+            raise ValueError("REAL mode requires manifest.temp_dir.")
+        submitter = submitter or RealSubmitter(manifest.temp_dir)
 
     manifest.state = "W_TRAKCIE"
     manifest.state_timestamps["W_TRAKCIE"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
