@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import os
 import re
 import shutil
@@ -121,6 +122,14 @@ def _run_dispatch(manifest: Manifest) -> None:
         manifest.state = "WYDRUKOWANE"
         manifest.state_timestamps["WYDRUKOWANE"] = _now_str()
     _persist_manifest(manifest)
+
+
+def _manifest_for_details(manifest: Manifest) -> tuple[Manifest, bool]:
+    if manifest.groups or not manifest.printable_pages:
+        return manifest, False
+    preview = deepcopy(manifest)
+    build_groups(preview, FakeQueueDepth({"Ploter_A_297mm": 0, "Ploter_E_297mm": 0}))
+    return preview, True
 
 
 def _delete_order(manifest: Manifest) -> None:
@@ -394,6 +403,15 @@ def _render_groups_details(manifest: Manifest) -> None:
                 st.write(f"- {_page_line(manifest, ref)}")
 
 
+def _render_queue_summary(manifest: Manifest) -> None:
+    st.markdown("### Routing na plotery")
+    if not manifest.groups:
+        st.caption("Brak routingu")
+        return
+    for group in manifest.groups:
+        st.write(f"- {group.target_queue}: {len(group.item_refs)} stron ({group.profile_id})")
+
+
 def _render_batch_297_details(manifest: Manifest) -> None:
     st.markdown("### Plan 297 (paczki)")
     plan = manifest.batch_plan_297
@@ -426,9 +444,14 @@ def _render_details_panel(manifests: list[Manifest]) -> None:
     st.write(f"Persistent dir: {selected.persistent_dir}")
     st.write(f"Temp dir: {selected.temp_dir}")
 
-    _render_review_details(selected)
-    _render_groups_details(selected)
-    _render_batch_297_details(selected)
+    details_manifest, is_preview = _manifest_for_details(selected)
+    if is_preview:
+        st.info("Podgląd routingu (przed wykonaniem): plan 297 liczony z qA=0, qE=0.")
+
+    _render_review_details(details_manifest)
+    _render_queue_summary(details_manifest)
+    _render_groups_details(details_manifest)
+    _render_batch_297_details(details_manifest)
 
 
 def main() -> None:
