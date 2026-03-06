@@ -76,12 +76,13 @@ def test_custom_size_goes_to_custom_review(tmp_path):
     assert result.pages[0].kind == "CUSTOM"
 
 
-def test_landscape_requires_rotation_and_goes_to_custom_review(tmp_path):
+def test_landscape_a3_is_printable_after_normalization(tmp_path):
     pdf = tmp_path / "a3_landscape.pdf"
     _make_single_page_pdf(pdf, 420, 297)
 
     result = analyze_pdf(pdf)
 
-    assert result.decision == "CUSTOM_REVIEW"
-    assert result.reason == "ROTATION_REQUIRED"
-    assert result.pages[0].rotation_required is True
+    assert result.decision == "PRINTABLE"
+    assert result.reason is None
+    assert result.pages[0].kind == "A3"
+    assert result.pages[0].rotation_required is False

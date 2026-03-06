@@ -56,6 +56,8 @@ def _init_state() -> None:
         st.session_state.confirm_delete_temp_for = None
     if "show_manual_form" not in st.session_state:
         st.session_state.show_manual_form = False
+    if "confirm_delete_order_for" not in st.session_state:
+        st.session_state.confirm_delete_order_for = None
 
 
 def _load_all_manifests() -> list[Manifest]:
@@ -119,6 +121,12 @@ def _run_dispatch(manifest: Manifest) -> None:
         manifest.state = "WYDRUKOWANE"
         manifest.state_timestamps["WYDRUKOWANE"] = _now_str()
     _persist_manifest(manifest)
+
+
+def _delete_order(manifest: Manifest) -> None:
+    shutil.rmtree(_order_dir(manifest.order_id), ignore_errors=True)
+    if st.session_state.selected_order_id == manifest.order_id:
+        st.session_state.selected_order_id = None
 
 
 def _open_path(path: Path) -> None:
@@ -318,6 +326,22 @@ def _render_order_card(manifest: Manifest) -> None:
                 if st.button("Usuń TEMP", key=f"delete-temp-{manifest.order_id}"):
                     st.session_state.confirm_delete_temp_for = manifest.order_id
                     st.rerun()
+
+        if st.session_state.confirm_delete_order_for == manifest.order_id:
+            st.warning("Potwierdź usunięcie zlecenia")
+            col_del1, col_del2 = st.columns(2)
+            if col_del1.button("Tak, usuń zlecenie", key=f"delete-order-confirm-{manifest.order_id}"):
+                _delete_order(manifest)
+                st.session_state.confirm_delete_order_for = None
+                st.success("Usunięto zlecenie.")
+                st.rerun()
+            if col_del2.button("Anuluj", key=f"delete-order-cancel-{manifest.order_id}"):
+                st.session_state.confirm_delete_order_for = None
+                st.rerun()
+        else:
+            if st.button("Usuń zlecenie", key=f"delete-order-{manifest.order_id}"):
+                st.session_state.confirm_delete_order_for = manifest.order_id
+                st.rerun()
 
         if st.button("Szczegóły", key=f"details-{manifest.order_id}"):
             st.session_state.selected_order_id = manifest.order_id

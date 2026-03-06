@@ -68,7 +68,9 @@ def _match_supported_width(value_mm: float) -> int | None:
 def _classify_page(page_number: int, width_mm_raw: float, height_mm_raw: float) -> PageAnalysis:
     width_mm = min(width_mm_raw, height_mm_raw)
     length_mm = max(width_mm_raw, height_mm_raw)
-    rotation_required = width_mm_raw > height_mm_raw
+    # In practice we normalize by shorter edge width and do not force custom review
+    # solely because source page is landscape.
+    rotation_required = False
 
     if _is_close(width_mm, A4_W) and _is_close(length_mm, A4_H):
         return PageAnalysis(
