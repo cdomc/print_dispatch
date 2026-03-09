@@ -18,6 +18,7 @@ class RealSubmitter:
         self.temp_dir = Path(temp_dir)
         self.sumatra_path = self._resolve_sumatra_path(sumatra_path)
         self.engine: RealEngine = engine or os.getenv("PRINT_DISPATCH_REAL_ENGINE", "SUMATRA").upper()  # type: ignore[assignment]
+        self.long_engine: RealEngine = os.getenv("PRINT_DISPATCH_LONG_ENGINE", "RAW").upper()  # type: ignore[assignment]
 
     @staticmethod
     def _resolve_sumatra_path(explicit_path: str | Path | None) -> Path | None:
@@ -52,7 +53,15 @@ class RealSubmitter:
         if page.page_number is None:
             raise ValueError("Missing page_number for printable page in REAL mode.")
         filename = f"{Path(page.file_original_name).stem}__p{page.page_number:04d}.pdf"
-        return self.temp_dir / filename
+
+        direct = self.temp_dir / filename
+        if direct.exists():
+            return direct
+
+        matches = sorted(self.temp_dir.rglob(filename))
+        if matches:
+            return matches[0]
+        return direct
 
     @staticmethod
     def _submit_raw_to_queue(queue_name: str, source_pdf: Path) -> None:
@@ -62,7 +71,7 @@ class RealSubmitter:
         try:
             with source_pdf.open("rb") as f:
                 payload = f.read()
-            job = win32print.StartDocPrinter(printer, 1, ("PrintDispatch", None, "RAW"))
+            win32print.StartDocPrinter(printer, 1, ("PrintDispatch", None, "RAW"))
             try:
                 win32print.StartPagePrinter(printer)
                 win32print.WritePrinter(printer, payload)
@@ -93,6 +102,21 @@ class RealSubmitter:
             details = stderr or stdout or f"exit={result.returncode}"
             raise RuntimeError(f"Sumatra submit failed for {source_pdf}: {details}")
 
+    def _submit_with_engine(self, engine: RealEngine, page: PrintablePage, source_pdf: Path) -> None:
+        if engine == "SUMATRA":
+            self._submit_via_sumatra(page, source_pdf)
+            return
+        if engine == "RAW":
+            self._submit_raw_to_queue(page.target_queue, source_pdf)
+            return
+        if engine == "AUTO":
+            try:
+                self._submit_via_sumatra(page, source_pdf)
+            except Exception:
+                self._submit_raw_to_queue(page.target_queue, source_pdf)
+            return
+        raise RuntimeError(f"Unsupported engine: {engine}")
+
     def submit_page(self, page: PrintablePage) -> None:
         if os.name != "nt":
             raise RuntimeError("REAL mode is supported only on Windows.")
@@ -100,17 +124,5 @@ class RealSubmitter:
         if not source_pdf.exists():
             raise FileNotFoundError(f"Single-page PDF not found: {source_pdf}")
 
-        if self.engine == "SUMATRA":
-            self._submit_via_sumatra(page, source_pdf)
-            return
-        if self.engine == "RAW":
-            self._submit_raw_to_queue(page.target_queue, source_pdf)
-            return
-        if self.engine == "AUTO":
-            try:
-                self._submit_via_sumatra(page, source_pdf)
-                return
-            except Exception:
-                self._submit_raw_to_queue(page.target_queue, source_pdf)
-                return
-        raise RuntimeError(f"Unsupported PRINT_DISPATCH_REAL_ENGINE: {self.engine}")
+        effective_engine = self.long_engine if "_LONG_" in page.profile_id else self.engine
+        self._submit_with_engine(effective_engine, page, source_pdf)

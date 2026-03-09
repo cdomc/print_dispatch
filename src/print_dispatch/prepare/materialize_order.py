@@ -67,6 +67,14 @@ def _build_printable_page(file_path: Path, page_number: int, kind: str, width_ke
     )
 
 
+def _temp_bucket_name(kind: str, width_key: int | None) -> str:
+    if kind == "A3":
+        return "A3"
+    if kind == "LONG" and width_key is not None:
+        return f"LONG_{width_key}"
+    return "OTHER"
+
+
 def materialize_order(manifest: Manifest, manifest_path: str | Path | None = None) -> Manifest:
     _, temp_dir, a4_review_dir, custom_review_dir = _ensure_order_dirs(manifest)
 
@@ -96,9 +104,17 @@ def materialize_order(manifest: Manifest, manifest_path: str | Path | None = Non
         if len(split_paths) != len(analysis.pages):
             raise ValueError(f"Split page count mismatch for {file_path}")
 
-        for page in analysis.pages:
+        for split_path, page in zip(split_paths, analysis.pages):
             if page.width_key is None:
                 raise ValueError(f"Printable page without width_key for {file_path}, page {page.page_number}")
+
+            bucket = _temp_bucket_name(page.kind, page.width_key)
+            bucket_dir = temp_dir / bucket
+            bucket_dir.mkdir(parents=True, exist_ok=True)
+            target_split_path = bucket_dir / split_path.name
+            if split_path != target_split_path:
+                shutil.move(str(split_path), str(target_split_path))
+
             manifest.printable_pages.append(
                 _build_printable_page(
                     file_path=file_path,

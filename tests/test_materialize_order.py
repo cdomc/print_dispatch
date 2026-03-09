@@ -68,8 +68,9 @@ def test_materialize_order_creates_dirs_copies_review_and_builds_manifest(tmp_pa
     assert (persistent_dir / "A4_REVIEW" / "a4.pdf").exists()
     assert (persistent_dir / "CUSTOM_REVIEW" / "long_3100.pdf").exists()
 
-    split_files = sorted(temp_dir.glob("auto_a3_multi__p*.pdf"))
+    split_files = sorted(temp_dir.rglob("auto_a3_multi__p*.pdf"))
     assert len(split_files) == 2
+    assert (temp_dir / "A3").exists()
 
     review_map = {(item.file_original_name, item.reason, item.bucket) for item in result.review_items}
     assert ("a4.pdf", "CONTAINS_A4", "A4_REVIEW") in review_map
