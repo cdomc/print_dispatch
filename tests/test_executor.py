@@ -186,3 +186,36 @@ def test_commit_print_real_with_injected_submitter(tmp_path):
 
     assert fake.calls == 1
     assert manifest.groups[0].status == "COMPLETED"
+
+
+def test_commit_print_error_without_message_uses_exception_name(tmp_path):
+    class SilentFailSubmitter:
+        def submit_page(self, _page):
+            raise RuntimeError()
+
+    manifest = _base_manifest(tmp_path)
+    manifest.printable_pages = [
+        PrintablePage(
+            file_original_name="silent.pdf",
+            file_original_path="C:/in/silent.pdf",
+            page_number=1,
+            width_key=297,
+            profile_id="P297_A3_STD",
+            target_queue="Ploter_A_297mm",
+            copies=1,
+        )
+    ]
+    manifest.groups = [
+        Group(
+            group_id="g-silent",
+            target_queue="Ploter_A_297mm",
+            profile_id="P297_A3_STD",
+            item_refs=[0],
+            status="READY",
+        )
+    ]
+
+    commit_print(manifest, submitter=SilentFailSubmitter())
+
+    assert manifest.groups[0].status == "FAILED"
+    assert manifest.groups[0].last_error == "RuntimeError"

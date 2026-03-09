@@ -41,6 +41,17 @@ def test_a3_is_printable(tmp_path):
     assert page.rotation_required is False
 
 
+def test_a3_with_small_height_drift_is_still_a3(tmp_path):
+    pdf = tmp_path / "a3_drift.pdf"
+    _make_single_page_pdf(pdf, 297, 420.18)
+
+    result = analyze_pdf(pdf)
+
+    assert result.decision == "PRINTABLE"
+    assert result.reason is None
+    assert result.pages[0].kind == "A3"
+
+
 def test_long_297x3000_is_printable(tmp_path):
     pdf = tmp_path / "long_3000.pdf"
     _make_single_page_pdf(pdf, 297, 3000)

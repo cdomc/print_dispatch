@@ -12,6 +12,7 @@ MM_PER_INCH = 25.4
 PT_PER_INCH = 72.0
 MM_PER_PT = MM_PER_INCH / PT_PER_INCH
 TOLERANCE_MM = 2.0
+A3_TOLERANCE_MM = 3.0
 
 A4_W = 210.0
 A4_H = 297.0
@@ -85,7 +86,7 @@ def _classify_page(page_number: int, width_mm_raw: float, height_mm_raw: float) 
             rotation_required=rotation_required,
         )
 
-    if _is_close(width_mm, A3_W) and _is_close(length_mm, A3_H):
+    if _is_close(width_mm, A3_W, A3_TOLERANCE_MM) and _is_close(length_mm, A3_H, A3_TOLERANCE_MM):
         return PageAnalysis(
             page_number=page_number,
             width_mm_raw=width_mm_raw,

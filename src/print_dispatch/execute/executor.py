@@ -113,7 +113,7 @@ def commit_print(
                 logger.info(log_line)
                 _append_attempt(manifest, target=f"group:{group.group_id}", result="OK", error=None)
             except Exception as exc:  # noqa: BLE001
-                message = str(exc)
+                message = str(exc).strip() or exc.__class__.__name__
                 page.status = "FAILED"
                 page.last_error = message
                 group.status = "FAILED"

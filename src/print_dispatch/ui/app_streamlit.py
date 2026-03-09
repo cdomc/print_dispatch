@@ -44,6 +44,7 @@ PREFER_297_MAP = {
     "Tylko A": "ONLY_A",
     "Tylko E": "ONLY_E",
 }
+TEMP_BUCKETS = ("A3", "LONG_297", "LONG_420", "LONG_594", "LONG_841")
 
 
 def _now_str() -> str:
@@ -51,7 +52,7 @@ def _now_str() -> str:
 
 
 def _order_dir(order_id: str) -> Path:
-    return APP_DATA_DIR / order_id
+    return (APP_DATA_DIR / order_id).resolve()
 
 
 def _manifest_path(order_id: str) -> Path:
@@ -82,6 +83,15 @@ def _load_all_manifests() -> list[Manifest]:
         except Exception:
             continue
     return sorted(manifests, key=lambda m: m.received_time, reverse=True)
+
+
+def _ensure_temp_subfolders(temp_dir: str | None) -> None:
+    if not temp_dir:
+        return
+    base = Path(temp_dir)
+    base.mkdir(parents=True, exist_ok=True)
+    for bucket in TEMP_BUCKETS:
+        (base / bucket).mkdir(parents=True, exist_ok=True)
 
 
 def _persist_manifest(manifest: Manifest) -> None:
@@ -144,9 +154,17 @@ def _collect_dispatch_errors(manifest: Manifest) -> list[str]:
     return errors
 
 
+def _latest_execution_error(manifest: Manifest) -> str | None:
+    for attempt in reversed(manifest.execution_attempts):
+        if attempt.result == "FAIL" and attempt.error:
+            return f"{attempt.target}: {attempt.error}"
+    return None
+
+
 def _run_dispatch(
     manifest: Manifest, execution_mode: ExecutionMode, prefer_297_label: str
 ) -> tuple[bool, list[str]]:
+    _ensure_temp_subfolders(manifest.temp_dir)
     build_groups(
         manifest,
         FakeQueueDepth({"Ploter_A_297mm": 0, "Ploter_E_297mm": 0}),
@@ -184,13 +202,14 @@ def _delete_order(manifest: Manifest) -> None:
 
 
 def _open_path(path: Path) -> None:
+    target = path.resolve()
     try:
         if os.name == "nt":
-            os.startfile(str(path))  # type: ignore[attr-defined]
+            os.startfile(str(target))  # type: ignore[attr-defined]
         else:
-            subprocess.Popen(["xdg-open", str(path)])
+            subprocess.Popen(["xdg-open", str(target)])
     except Exception:
-        st.info(f"Ścieżka: {path}")
+        st.info(f"Ścieżka: {target}")
 
 
 def _resolve_user_source_path(raw_path: str) -> tuple[Path | None, str]:
@@ -222,8 +241,8 @@ def _create_manual_order(
     auto_print: bool,
 ) -> None:
     order_id = f"ord-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
-    persistent_dir = _order_dir(order_id) / "persistent"
-    temp_dir = _order_dir(order_id) / "temp"
+    persistent_dir = (_order_dir(order_id) / "persistent").resolve()
+    temp_dir = (_order_dir(order_id) / "temp").resolve()
 
     manifest = Manifest(
         order_id=order_id,
@@ -242,6 +261,7 @@ def _create_manual_order(
     )
 
     materialize_order(manifest, manifest_path=_manifest_path(order_id))
+    _ensure_temp_subfolders(str(temp_dir))
     execution_mode = ExecutionMode(st.session_state.execution_mode)
     prefer_label = st.session_state.get(f"prefer-297-{order_id}", "Ploter A")
     if (
@@ -368,6 +388,19 @@ def _render_order_card(manifest: Manifest) -> None:
                 ]
             )
         )
+        failed_groups = [g for g in manifest.groups if g.status == "FAILED"]
+        if failed_groups:
+            st.error("Poprzednia próba druku zakończona błędem.")
+            details = [f"{g.group_id}: {g.last_error or 'UNKNOWN_ERROR'}" for g in failed_groups[:2]]
+            latest = _latest_execution_error(manifest)
+            if latest:
+                details.append(latest)
+            st.caption(" | ".join(details))
+        elif manifest.state == "W_TRAKCIE":
+            latest = _latest_execution_error(manifest)
+            if latest:
+                st.warning("Ostatni błąd wykonania:")
+                st.caption(latest)
         st.selectbox(
             "Preferowany ploter (297)",
             options=PREFER_297_OPTIONS,
@@ -436,6 +469,7 @@ def _render_order_card(manifest: Manifest) -> None:
                 _open_path(Path(manifest.persistent_dir) / "CUSTOM_REVIEW")
         if manifest.temp_dir:
             if st.button("Otwórz TEMP", key=f"open-temp-{manifest.order_id}"):
+                _ensure_temp_subfolders(manifest.temp_dir)
                 _open_path(Path(manifest.temp_dir))
 
         if manifest.state == "WYDRUKOWANE":
