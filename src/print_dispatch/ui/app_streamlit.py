@@ -25,7 +25,7 @@ from print_dispatch.config import ExecutionMode
 from print_dispatch.dispatch.queue_depth import FakeQueueDepth
 from print_dispatch.domain.models import Manifest
 from print_dispatch.execute.executor import commit_print
-from print_dispatch.ingest.outlook_ingest import ingest_outlook_orders
+from print_dispatch.ingest.outlook_ingest import get_outlook_connection_status, ingest_outlook_orders
 from print_dispatch.manifest_io import load_manifest, save_manifest
 from print_dispatch.prepare.materialize_order import materialize_order
 
@@ -70,7 +70,7 @@ def _init_state() -> None:
     if "confirm_real_print_for" not in st.session_state:
         st.session_state.confirm_real_print_for = None
     if "execution_mode" not in st.session_state:
-        st.session_state.execution_mode = ExecutionMode.DRY_RUN.value
+        st.session_state.execution_mode = ExecutionMode.REAL.value
 
 
 def _load_all_manifests() -> list[Manifest]:
@@ -92,14 +92,21 @@ def _is_multi_source_file(manifest: Manifest, page_index: int) -> bool:
     target = manifest.printable_pages[page_index]
     count = 0
     for page in manifest.printable_pages:
-        if page.file_original_name == target.file_original_name and page.file_original_path == target.file_original_path:
+        if (
+            page.file_original_name == target.file_original_name
+            and page.file_original_path == target.file_original_path
+        ):
             count += 1
     return count > 1
 
 
 def _page_line(manifest: Manifest, page_index: int) -> str:
     page = manifest.printable_pages[page_index]
-    page_suffix = f" | PAGE={page.page_number}" if _is_multi_source_file(manifest, page_index) else ""
+    page_suffix = (
+        f" | PAGE={page.page_number}"
+        if _is_multi_source_file(manifest, page_index)
+        else ""
+    )
     return f"FILE={page.file_original_name}{page_suffix} | COPIES={page.copies}"
 
 
@@ -124,10 +131,14 @@ def _count_review(manifest: Manifest, bucket: str) -> int:
 
 
 def _all_groups_completed(manifest: Manifest) -> bool:
-    return bool(manifest.groups) and all(g.status == "COMPLETED" for g in manifest.groups)
+    return bool(manifest.groups) and all(
+        g.status == "COMPLETED" for g in manifest.groups
+    )
 
 
-def _run_dispatch(manifest: Manifest, execution_mode: ExecutionMode, prefer_297_label: str) -> None:
+def _run_dispatch(
+    manifest: Manifest, execution_mode: ExecutionMode, prefer_297_label: str
+) -> None:
     build_groups(
         manifest,
         FakeQueueDepth({"Ploter_A_297mm": 0, "Ploter_E_297mm": 0}),
@@ -220,23 +231,33 @@ def _create_manual_order(
     materialize_order(manifest, manifest_path=_manifest_path(order_id))
     execution_mode = ExecutionMode(st.session_state.execution_mode)
     prefer_label = st.session_state.get(f"prefer-297-{order_id}", "Ploter A")
-    if auto_print and manifest.printable_pages and execution_mode == ExecutionMode.DRY_RUN:
-        _run_dispatch(manifest, execution_mode=execution_mode, prefer_297_label=prefer_label)
+    if (
+        auto_print
+        and manifest.printable_pages
+        and execution_mode == ExecutionMode.DRY_RUN
+    ):
+        _run_dispatch(
+            manifest, execution_mode=execution_mode, prefer_297_label=prefer_label
+        )
     else:
         _persist_manifest(manifest)
 
     st.session_state.selected_order_id = order_id
 
 
-def _check_outlook() -> list[Manifest]:
+def _check_outlook() -> tuple[list[Manifest], str]:
     processed_ids_file = APP_DATA_DIR.parent / "processed_ids.json"
+    ok, status = get_outlook_connection_status()
+    if not ok:
+        return [], status
     manifests = ingest_outlook_orders(
         orders_root=APP_DATA_DIR,
         processed_ids_file=processed_ids_file,
+        backfill_processed=True,
     )
     if manifests:
         st.session_state.selected_order_id = manifests[0].order_id
-    return manifests
+    return manifests, status
 
 
 def _render_header_actions() -> None:
@@ -244,17 +265,22 @@ def _render_header_actions() -> None:
     if col_manual.button("Nowe zlecenie ręczne", use_container_width=True):
         st.session_state.show_manual_form = not st.session_state.show_manual_form
     if col_outlook.button("Sprawdź Outlook", use_container_width=True):
-        created = _check_outlook()
+        created, status = _check_outlook()
         if created:
-            st.success(f"Dodano z Outlook: {len(created)}")
+            st.success(f"{status} Dodano z Outlook: {len(created)}")
         else:
-            st.info("Brak nowych zleceń Outlook.")
+            if status.startswith("Połączenie z Outlook OK"):
+                st.info("Połączenie z Outlook OK. Brak nowych zleceń.")
+            else:
+                st.error(status)
         st.rerun()
     with col_mode:
         mode_value = st.selectbox(
             "Tryb wykonania",
             options=[ExecutionMode.DRY_RUN.value, ExecutionMode.REAL.value],
-            index=0 if st.session_state.execution_mode == ExecutionMode.DRY_RUN.value else 1,
+            index=0
+            if st.session_state.execution_mode == ExecutionMode.DRY_RUN.value
+            else 1,
             key="execution_mode",
         )
         if mode_value == ExecutionMode.REAL.value:
@@ -272,10 +298,14 @@ def _render_manual_intake() -> None:
             copies = st.number_input("Kopie", min_value=1, value=1, step=1)
             person = st.text_input("Osoba", value="Ręczne")
             topic = st.text_input("Temat", value="Ręczne")
-            sposob_choice = st.selectbox("Sposób opracowania", options=["(brak)", "Zeszyt", "Teczka"])
+            sposob_choice = st.selectbox(
+                "Sposób opracowania", options=["(brak)", "Zeszyt", "Teczka"]
+            )
             col_a, col_b = st.columns(2)
             create_clicked = col_a.form_submit_button("Utwórz zlecenie")
-            create_print_clicked = col_b.form_submit_button("Utwórz i drukuj automatyczne")
+            create_print_clicked = col_b.form_submit_button(
+                "Utwórz i drukuj automatyczne"
+            )
 
     if create_clicked or create_print_clicked:
         if not source_path.strip():
@@ -285,7 +315,9 @@ def _render_manual_intake() -> None:
         if source is None:
             st.error(f"Ścieżka nie istnieje: {normalized}")
             if os.name != "nt":
-                st.caption("Jeśli podajesz ścieżkę Windows (np. C:\\...), uruchom aplikację natywnie na Windows albo użyj /mnt/<dysk>/...")
+                st.caption(
+                    "Jeśli podajesz ścieżkę Windows (np. C:\\...), uruchom aplikację natywnie na Windows albo użyj /mnt/<dysk>/..."
+                )
             return
         sposob = None if sposob_choice == "(brak)" else sposob_choice
         _create_manual_order(
@@ -331,26 +363,43 @@ def _render_order_card(manifest: Manifest) -> None:
 
         if manifest.state in {"ZLECONE", "W_TRAKCIE"} and manifest.printable_pages:
             current_mode = ExecutionMode(st.session_state.execution_mode)
-            prefer_label = st.session_state.get(f"prefer-297-{manifest.order_id}", "Ploter A")
+            prefer_label = st.session_state.get(
+                f"prefer-297-{manifest.order_id}", "Ploter A"
+            )
             if current_mode == ExecutionMode.DRY_RUN:
                 if st.button("Drukuj automatyczne", key=f"print-{manifest.order_id}"):
-                    _run_dispatch(manifest, execution_mode=current_mode, prefer_297_label=prefer_label)
+                    _run_dispatch(
+                        manifest,
+                        execution_mode=current_mode,
+                        prefer_297_label=prefer_label,
+                    )
                     st.success("Wykonano plan automatyczny (DRY_RUN).")
                     st.rerun()
             else:
                 if st.session_state.confirm_real_print_for == manifest.order_id:
                     st.warning("Potwierdź REAL druk automatyczny")
                     col_r1, col_r2 = st.columns(2)
-                    if col_r1.button("Potwierdź REAL druk", key=f"real-print-confirm-{manifest.order_id}"):
-                        _run_dispatch(manifest, execution_mode=current_mode, prefer_297_label=prefer_label)
+                    if col_r1.button(
+                        "Potwierdź REAL druk",
+                        key=f"real-print-confirm-{manifest.order_id}",
+                    ):
+                        _run_dispatch(
+                            manifest,
+                            execution_mode=current_mode,
+                            prefer_297_label=prefer_label,
+                        )
                         st.session_state.confirm_real_print_for = None
                         st.success("Wysłano druk w trybie REAL.")
                         st.rerun()
-                    if col_r2.button("Anuluj", key=f"real-print-cancel-{manifest.order_id}"):
+                    if col_r2.button(
+                        "Anuluj", key=f"real-print-cancel-{manifest.order_id}"
+                    ):
                         st.session_state.confirm_real_print_for = None
                         st.rerun()
                 else:
-                    if st.button("Drukuj automatyczne", key=f"print-{manifest.order_id}"):
+                    if st.button(
+                        "Drukuj automatyczne", key=f"print-{manifest.order_id}"
+                    ):
                         st.session_state.confirm_real_print_for = manifest.order_id
                         st.rerun()
 
@@ -358,7 +407,9 @@ def _render_order_card(manifest: Manifest) -> None:
             if st.button("Otwórz A4_REVIEW", key=f"open-a4-{manifest.order_id}"):
                 _open_path(Path(manifest.persistent_dir) / "A4_REVIEW")
         if custom_count > 0:
-            if st.button("Otwórz CUSTOM_REVIEW", key=f"open-custom-{manifest.order_id}"):
+            if st.button(
+                "Otwórz CUSTOM_REVIEW", key=f"open-custom-{manifest.order_id}"
+            ):
                 _open_path(Path(manifest.persistent_dir) / "CUSTOM_REVIEW")
 
         if manifest.state == "WYDRUKOWANE":
@@ -367,7 +418,9 @@ def _render_order_card(manifest: Manifest) -> None:
                 "Potwierdź zakończenie",
                 key=f"finish-{manifest.order_id}",
                 disabled=disabled,
-                help="Uzupełnij sposób opracowania, aby zakończyć." if disabled else None,
+                help="Uzupełnij sposób opracowania, aby zakończyć."
+                if disabled
+                else None,
             ):
                 manifest.state = "ZAKONCZONE"
                 manifest.state_timestamps["ZAKONCZONE"] = _now_str()
@@ -378,7 +431,9 @@ def _render_order_card(manifest: Manifest) -> None:
             if st.session_state.confirm_delete_temp_for == manifest.order_id:
                 st.warning("Potwierdź usunięcie TEMP")
                 col1, col2 = st.columns(2)
-                if col1.button("Tak, usuń TEMP", key=f"delete-temp-confirm-{manifest.order_id}"):
+                if col1.button(
+                    "Tak, usuń TEMP", key=f"delete-temp-confirm-{manifest.order_id}"
+                ):
                     if manifest.temp_dir:
                         shutil.rmtree(manifest.temp_dir, ignore_errors=True)
                     st.session_state.confirm_delete_temp_for = None
@@ -395,12 +450,16 @@ def _render_order_card(manifest: Manifest) -> None:
         if st.session_state.confirm_delete_order_for == manifest.order_id:
             st.warning("Potwierdź usunięcie zlecenia")
             col_del1, col_del2 = st.columns(2)
-            if col_del1.button("Tak, usuń zlecenie", key=f"delete-order-confirm-{manifest.order_id}"):
+            if col_del1.button(
+                "Tak, usuń zlecenie", key=f"delete-order-confirm-{manifest.order_id}"
+            ):
                 _delete_order(manifest)
                 st.session_state.confirm_delete_order_for = None
                 st.success("Usunięto zlecenie.")
                 st.rerun()
-            if col_del2.button("Anuluj", key=f"delete-order-cancel-{manifest.order_id}"):
+            if col_del2.button(
+                "Anuluj", key=f"delete-order-cancel-{manifest.order_id}"
+            ):
                 st.session_state.confirm_delete_order_for = None
                 st.rerun()
         else:
@@ -465,7 +524,9 @@ def _render_queue_summary(manifest: Manifest) -> None:
         st.caption("Brak routingu")
         return
     for group in manifest.groups:
-        st.write(f"- {group.target_queue}: {len(group.item_refs)} stron ({group.profile_id})")
+        st.write(
+            f"- {group.target_queue}: {len(group.item_refs)} stron ({group.profile_id})"
+        )
 
 
 def _render_batch_297_details(manifest: Manifest) -> None:

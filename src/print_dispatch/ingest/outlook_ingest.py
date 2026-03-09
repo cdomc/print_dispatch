@@ -11,7 +11,6 @@ from typing import Any
 
 from ..domain.models import Manifest
 from ..manifest_io import save_manifest
-from ..prepare.materialize_order import materialize_order
 
 TARGET_ACCOUNT = "ploterownia@value-eng.pl"
 SUBJECT_KEYWORD = "Nowe_Zlecenie_Wydruku_123"
@@ -165,12 +164,28 @@ def _build_outlook_manifest(data: dict[str, Any], orders_root: Path) -> Manifest
     )
 
 
+def _load_existing_source_refs(orders_root: Path) -> set[str]:
+    refs: set[str] = set()
+    for manifest_path in orders_root.glob("*/manifest.json"):
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            ref = payload.get("source_ref")
+            if isinstance(ref, str) and ref:
+                refs.add(ref)
+        except Exception:
+            continue
+    return refs
+
+
 def ingest_outlook_orders(
     *,
     orders_root: Path = DEFAULT_ORDERS_ROOT,
     processed_ids_file: Path = DEFAULT_PROCESSED_IDS_FILE,
     namespace: Any | None = None,
+    backfill_processed: bool = False,
 ) -> list[Manifest]:
+    from ..prepare.materialize_order import materialize_order
+
     ns = _get_namespace(namespace)
     if ns is None:
         return []
@@ -184,6 +199,7 @@ def ingest_outlook_orders(
         return []
 
     processed_ids = load_processed_ids(processed_ids_file)
+    existing_source_refs = _load_existing_source_refs(orders_root)
     created: list[Manifest] = []
 
     for message in _iter_messages(inbox):
@@ -195,7 +211,11 @@ def ingest_outlook_orders(
         if not entry_id:
             continue
 
-        if _is_processed_message(entry_id, message, processed_ids):
+        if entry_id in existing_source_refs:
+            continue
+
+        is_processed = _is_processed_message(entry_id, message, processed_ids)
+        if is_processed and not backfill_processed:
             continue
 
         try:
@@ -213,9 +233,26 @@ def ingest_outlook_orders(
 
             if mark_processed(message, ns):
                 processed_ids.add(entry_id)
+            existing_source_refs.add(entry_id)
             created.append(manifest)
         except Exception:
             continue
 
     save_processed_ids(processed_ids, processed_ids_file)
     return created
+
+
+def get_outlook_connection_status(namespace: Any | None = None) -> tuple[bool, str]:
+    ns = _get_namespace(namespace)
+    if ns is None:
+        return False, "Brak połączenia z Outlook (COM). Upewnij się, że Outlook Desktop jest uruchomiony i zalogowany."
+
+    store = _find_store(ns, TARGET_ACCOUNT)
+    if store is None:
+        return False, f"Nie znaleziono konta '{TARGET_ACCOUNT}' w Outlook."
+
+    inbox = _find_inbox(store)
+    if inbox is None:
+        return False, "Nie znaleziono folderu Inbox/Skrzynka odbiorcza dla konta."
+
+    return True, "Połączenie z Outlook OK."

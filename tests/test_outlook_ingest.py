@@ -6,7 +6,12 @@ from pathlib import Path
 
 from pypdf import PdfWriter
 
-from print_dispatch.ingest.outlook_ingest import ingest_outlook_orders, parse_email_body, parse_paths_field
+from print_dispatch.ingest.outlook_ingest import (
+    get_outlook_connection_status,
+    ingest_outlook_orders,
+    parse_email_body,
+    parse_paths_field,
+)
 
 
 def _mm_to_pt(value_mm: float) -> float:
@@ -41,12 +46,12 @@ class FakeApplication:
 
 
 class FakeMessage:
-    def __init__(self, *, subject: str, body: str, entry_id: str, received_time: datetime):
+    def __init__(self, *, subject: str, body: str, entry_id: str, received_time: datetime, categories: str = ""):
         self.Subject = subject
         self.Body = body
         self.EntryID = entry_id
         self.ReceivedTime = received_time
-        self.Categories = ""
+        self.Categories = categories
         self.UnRead = True
         self._saved = False
 
@@ -82,6 +87,20 @@ class FakeNamespace:
     def __init__(self, stores):
         self.Folders = stores
         self.Application = FakeApplication()
+
+
+def test_outlook_connection_status_ok_for_matching_store():
+    store = FakeStore("ploterownia@value-eng.pl", FakeInbox([]))
+    ok, status = get_outlook_connection_status(namespace=FakeNamespace([store]))
+    assert ok is True
+    assert "OK" in status
+
+
+def test_outlook_connection_status_reports_missing_store():
+    store = FakeStore("other@value-eng.pl", FakeInbox([]))
+    ok, status = get_outlook_connection_status(namespace=FakeNamespace([store]))
+    assert ok is False
+    assert "Nie znaleziono konta" in status
 
 
 def test_parse_paths_field_supports_bracketed_and_multiline():
@@ -164,3 +183,35 @@ def test_ingest_outlook_orders_smoke_with_fake_namespace(tmp_path):
         namespace=namespace,
     )
     assert manifests_second == []
+
+
+def test_ingest_outlook_orders_can_backfill_processed_messages(tmp_path):
+    source_dir = tmp_path / "source_backfill"
+    source_dir.mkdir(parents=True)
+    _make_pdf(source_dir / "doc.pdf")
+
+    body = (
+        "Nazwa tematu [Historyczne]\n"
+        "Rodzaj drukowanego dokumentu [Plan]\n"
+        "osoba zlecająca i odpowiedzialna [Anna]\n"
+        "ilość egzemplarzy [1]\n"
+        f"ścieżka zawierająca folder z pdf ['{source_dir}']\n"
+    )
+    message = FakeMessage(
+        subject="Nowe_Zlecenie_Wydruku_123 - history",
+        body=body,
+        entry_id="entry-history-1",
+        received_time=datetime(2026, 3, 6, 8, 0, 0),
+        categories="Processed",
+    )
+    store = FakeStore("ploterownia@value-eng.pl", FakeInbox([message]))
+    namespace = FakeNamespace([store])
+
+    manifests = ingest_outlook_orders(
+        orders_root=tmp_path / "orders",
+        processed_ids_file=tmp_path / "processed_ids.json",
+        namespace=namespace,
+        backfill_processed=True,
+    )
+    assert len(manifests) == 1
+    assert manifests[0].source_ref == "entry-history-1"

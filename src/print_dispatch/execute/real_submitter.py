@@ -48,25 +48,50 @@ class RealSubmitter:
         filename = f"{Path(page.file_original_name).stem}__p{page.page_number:04d}.pdf"
         return self.temp_dir / filename
 
+    @staticmethod
+    def _submit_raw_to_queue(queue_name: str, source_pdf: Path) -> None:
+        import win32print  # type: ignore[import-not-found]
+
+        printer = win32print.OpenPrinter(queue_name)
+        try:
+            with source_pdf.open("rb") as f:
+                payload = f.read()
+            job = win32print.StartDocPrinter(printer, 1, ("PrintDispatch", None, "RAW"))
+            try:
+                win32print.StartPagePrinter(printer)
+                win32print.WritePrinter(printer, payload)
+                win32print.EndPagePrinter(printer)
+            finally:
+                win32print.EndDocPrinter(printer)
+        finally:
+            win32print.ClosePrinter(printer)
+
     def submit_page(self, page: PrintablePage) -> None:
         if os.name != "nt":
             raise RuntimeError("REAL mode is supported only on Windows.")
-        if self.sumatra_path is None:
-            raise RuntimeError(
-                "SumatraPDF not found. REAL mode requires SumatraPDF to enforce 100% scale (noscale). "
-                "Set PRINT_DISPATCH_SUMATRA_PATH if installed in custom location."
-            )
-
         source_pdf = self._single_page_path(page)
         if not source_pdf.exists():
             raise FileNotFoundError(f"Single-page PDF not found: {source_pdf}")
+
+        raw_error: Exception | None = None
+        try:
+            self._submit_raw_to_queue(page.target_queue, source_pdf)
+            return
+        except Exception as exc:
+            raw_error = exc
+
+        if self.sumatra_path is None:
+            raise RuntimeError(
+                "RAW submit failed and SumatraPDF fallback is unavailable. "
+                "Install SumatraPDF or set PRINT_DISPATCH_SUMATRA_PATH."
+            ) from raw_error
 
         command = [
             str(self.sumatra_path),
             "-print-to",
             page.target_queue,
             "-print-settings",
-            "noscale,portrait",
+            "noscale",
             "-silent",
             str(source_pdf),
         ]
@@ -75,4 +100,4 @@ class RealSubmitter:
             stderr = (result.stderr or "").strip()
             stdout = (result.stdout or "").strip()
             details = stderr or stdout or f"exit={result.returncode}"
-            raise RuntimeError(f"REAL submit failed for {source_pdf}: {details}")
+            raise RuntimeError(f"REAL submit failed for {source_pdf}: {details}") from raw_error
