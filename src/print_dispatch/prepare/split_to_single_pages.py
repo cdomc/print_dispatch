@@ -6,12 +6,18 @@ from pathlib import Path
 
 from pypdf import PdfReader, PdfWriter
 
+MM_PER_PT = 25.4 / 72.0
+
 
 def _normalize_page_orientation(page):
-    """Rotate landscape source pages to portrait for deterministic print output."""
+    """
+    Rotate only standard-format landscape pages.
+    Long pages keep native orientation to avoid printer clipping on rolls.
+    """
     width = float(page.mediabox.width)
     height = float(page.mediabox.height)
-    if width > height:
+    longest_mm = max(width, height) * MM_PER_PT
+    if width > height and longest_mm <= 600.0:
         return page.rotate(90)
     return page
 

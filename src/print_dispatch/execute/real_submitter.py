@@ -6,14 +6,18 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Literal
 
 from ..domain.models import PrintablePage
 
+RealEngine = Literal["SUMATRA", "RAW", "AUTO"]
+
 
 class RealSubmitter:
-    def __init__(self, temp_dir: str | Path, sumatra_path: str | Path | None = None):
+    def __init__(self, temp_dir: str | Path, sumatra_path: str | Path | None = None, engine: RealEngine | None = None):
         self.temp_dir = Path(temp_dir)
         self.sumatra_path = self._resolve_sumatra_path(sumatra_path)
+        self.engine: RealEngine = engine or os.getenv("PRINT_DISPATCH_REAL_ENGINE", "SUMATRA").upper()  # type: ignore[assignment]
 
     @staticmethod
     def _resolve_sumatra_path(explicit_path: str | Path | None) -> Path | None:
@@ -31,9 +35,11 @@ class RealSubmitter:
         if which_path:
             return Path(which_path)
 
+        user_local_candidate = Path(r"C:\Users\DKL\AppData\Local\SumatraPDF\SumatraPDF.exe")
         program_files = os.getenv("ProgramFiles", r"C:\Program Files")
         program_files_x86 = os.getenv("ProgramFiles(x86)", r"C:\Program Files (x86)")
         candidates = [
+            user_local_candidate,
             Path(program_files) / "SumatraPDF" / "SumatraPDF.exe",
             Path(program_files_x86) / "SumatraPDF" / "SumatraPDF.exe",
         ]
@@ -66,26 +72,11 @@ class RealSubmitter:
         finally:
             win32print.ClosePrinter(printer)
 
-    def submit_page(self, page: PrintablePage) -> None:
-        if os.name != "nt":
-            raise RuntimeError("REAL mode is supported only on Windows.")
-        source_pdf = self._single_page_path(page)
-        if not source_pdf.exists():
-            raise FileNotFoundError(f"Single-page PDF not found: {source_pdf}")
-
-        raw_error: Exception | None = None
-        try:
-            self._submit_raw_to_queue(page.target_queue, source_pdf)
-            return
-        except Exception as exc:
-            raw_error = exc
-
+    def _submit_via_sumatra(self, page: PrintablePage, source_pdf: Path) -> None:
         if self.sumatra_path is None:
             raise RuntimeError(
-                "RAW submit failed and SumatraPDF fallback is unavailable. "
-                "Install SumatraPDF or set PRINT_DISPATCH_SUMATRA_PATH."
-            ) from raw_error
-
+                "SumatraPDF not found. Set PRINT_DISPATCH_SUMATRA_PATH or add SumatraPDF to PATH."
+            )
         command = [
             str(self.sumatra_path),
             "-print-to",
@@ -100,4 +91,26 @@ class RealSubmitter:
             stderr = (result.stderr or "").strip()
             stdout = (result.stdout or "").strip()
             details = stderr or stdout or f"exit={result.returncode}"
-            raise RuntimeError(f"REAL submit failed for {source_pdf}: {details}") from raw_error
+            raise RuntimeError(f"Sumatra submit failed for {source_pdf}: {details}")
+
+    def submit_page(self, page: PrintablePage) -> None:
+        if os.name != "nt":
+            raise RuntimeError("REAL mode is supported only on Windows.")
+        source_pdf = self._single_page_path(page)
+        if not source_pdf.exists():
+            raise FileNotFoundError(f"Single-page PDF not found: {source_pdf}")
+
+        if self.engine == "SUMATRA":
+            self._submit_via_sumatra(page, source_pdf)
+            return
+        if self.engine == "RAW":
+            self._submit_raw_to_queue(page.target_queue, source_pdf)
+            return
+        if self.engine == "AUTO":
+            try:
+                self._submit_via_sumatra(page, source_pdf)
+                return
+            except Exception:
+                self._submit_raw_to_queue(page.target_queue, source_pdf)
+                return
+        raise RuntimeError(f"Unsupported PRINT_DISPATCH_REAL_ENGINE: {self.engine}")
