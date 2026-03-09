@@ -136,9 +136,17 @@ def _all_groups_completed(manifest: Manifest) -> bool:
     )
 
 
+def _collect_dispatch_errors(manifest: Manifest) -> list[str]:
+    errors: list[str] = []
+    for group in manifest.groups:
+        if group.status == "FAILED":
+            errors.append(f"{group.group_id}: {group.last_error or 'UNKNOWN_ERROR'}")
+    return errors
+
+
 def _run_dispatch(
     manifest: Manifest, execution_mode: ExecutionMode, prefer_297_label: str
-) -> None:
+) -> tuple[bool, list[str]]:
     build_groups(
         manifest,
         FakeQueueDepth({"Ploter_A_297mm": 0, "Ploter_E_297mm": 0}),
@@ -148,7 +156,12 @@ def _run_dispatch(
     if _all_groups_completed(manifest):
         manifest.state = "WYDRUKOWANE"
         manifest.state_timestamps["WYDRUKOWANE"] = _now_str()
+        _persist_manifest(manifest)
+        return True, []
+
+    errors = _collect_dispatch_errors(manifest)
     _persist_manifest(manifest)
+    return False, errors
 
 
 def _manifest_for_details(manifest: Manifest) -> tuple[Manifest, bool]:
@@ -368,12 +381,17 @@ def _render_order_card(manifest: Manifest) -> None:
             )
             if current_mode == ExecutionMode.DRY_RUN:
                 if st.button("Drukuj automatyczne", key=f"print-{manifest.order_id}"):
-                    _run_dispatch(
+                    ok, errors = _run_dispatch(
                         manifest,
                         execution_mode=current_mode,
                         prefer_297_label=prefer_label,
                     )
-                    st.success("Wykonano plan automatyczny (DRY_RUN).")
+                    if ok:
+                        st.success("Wykonano plan automatyczny (DRY_RUN).")
+                    else:
+                        st.error("Plan zatrzymał się z błędem. Sprawdź statusy grup.")
+                        if errors:
+                            st.caption(" | ".join(errors[:2]))
                     st.rerun()
             else:
                 if st.session_state.confirm_real_print_for == manifest.order_id:
@@ -383,13 +401,18 @@ def _render_order_card(manifest: Manifest) -> None:
                         "Potwierdź REAL druk",
                         key=f"real-print-confirm-{manifest.order_id}",
                     ):
-                        _run_dispatch(
+                        ok, errors = _run_dispatch(
                             manifest,
                             execution_mode=current_mode,
                             prefer_297_label=prefer_label,
                         )
                         st.session_state.confirm_real_print_for = None
-                        st.success("Wysłano druk w trybie REAL.")
+                        if ok:
+                            st.success("Wysłano druk w trybie REAL.")
+                        else:
+                            st.error("Druk REAL nie został wykonany dla wszystkich grup.")
+                            if errors:
+                                st.caption(" | ".join(errors[:2]))
                         st.rerun()
                     if col_r2.button(
                         "Anuluj", key=f"real-print-cancel-{manifest.order_id}"
@@ -411,6 +434,9 @@ def _render_order_card(manifest: Manifest) -> None:
                 "Otwórz CUSTOM_REVIEW", key=f"open-custom-{manifest.order_id}"
             ):
                 _open_path(Path(manifest.persistent_dir) / "CUSTOM_REVIEW")
+        if manifest.temp_dir:
+            if st.button("Otwórz TEMP", key=f"open-temp-{manifest.order_id}"):
+                _open_path(Path(manifest.temp_dir))
 
         if manifest.state == "WYDRUKOWANE":
             disabled = manifest.sposob_opracowania is None

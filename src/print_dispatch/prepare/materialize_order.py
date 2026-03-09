@@ -49,6 +49,8 @@ def _ensure_order_dirs(manifest: Manifest) -> tuple[Path, Path, Path, Path]:
 
     for directory in (persistent_dir, temp_dir, a4_review_dir, custom_review_dir):
         directory.mkdir(parents=True, exist_ok=True)
+    for bucket in ("A3", "LONG_297", "LONG_420", "LONG_594", "LONG_841"):
+        (temp_dir / bucket).mkdir(parents=True, exist_ok=True)
 
     return persistent_dir, temp_dir, a4_review_dir, custom_review_dir
 

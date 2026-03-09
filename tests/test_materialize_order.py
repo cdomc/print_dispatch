@@ -111,3 +111,29 @@ def test_materialize_order_collects_uppercase_pdf_extension(tmp_path):
 
     assert len(result.printable_pages) == 1
     assert result.printable_pages[0].file_original_name == "RYSUNEK.PDF"
+
+
+def test_materialize_order_places_long_pages_in_size_subfolder(tmp_path):
+    input_dir = tmp_path / "in_long"
+    input_dir.mkdir(parents=True)
+    long_pdf = input_dir / "long_ok.pdf"
+    _make_pdf(long_pdf, [(297, 2000)])
+
+    temp_dir = tmp_path / "temp_long"
+    manifest = Manifest(
+        order_id="order-long",
+        received_time="2026-03-09 10:00:00",
+        source_type="MANUAL",
+        source_paths=[str(input_dir)],
+        source_ref="manual:20260309100000",
+        person="Ręczne",
+        topic="Long",
+        copies_default=1,
+        persistent_dir=str(tmp_path / "persistent_long"),
+        temp_dir=str(temp_dir),
+    )
+
+    materialize_order(manifest)
+
+    assert (temp_dir / "LONG_297").exists()
+    assert any((temp_dir / "LONG_297").glob("long_ok__p*.pdf"))
