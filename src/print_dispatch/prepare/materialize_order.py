@@ -1,4 +1,4 @@
-"""Materialize order directories and manifest lists from input PDFs."""
+"""Materialize order directories and manifest lists from input files."""
 
 from __future__ import annotations
 
@@ -25,16 +25,24 @@ QUEUE_BY_WIDTH: dict[int, str] = {
     841: "Ploter_C_594mm",
 }
 
+ALLOWED_SOURCE_EXTENSIONS = {".pdf", ".doc", ".docx"}
 
-def _collect_pdf_files(source_paths: list[str]) -> list[Path]:
+
+def _collect_supported_files(source_paths: list[str]) -> list[Path]:
     files: list[Path] = []
     for raw in source_paths:
         path = Path(raw)
-        if path.is_file() and path.suffix.lower() == ".pdf":
+        if path.is_file() and path.suffix.lower() in ALLOWED_SOURCE_EXTENSIONS:
             files.append(path)
             continue
         if path.is_dir():
-            files.extend(sorted(p for p in path.rglob("*") if p.is_file() and p.suffix.lower() == ".pdf"))
+            files.extend(
+                sorted(
+                    p
+                    for p in path.rglob("*")
+                    if p.is_file() and p.suffix.lower() in ALLOWED_SOURCE_EXTENSIONS
+                )
+            )
     return sorted(files)
 
 
@@ -83,9 +91,22 @@ def materialize_order(manifest: Manifest, manifest_path: str | Path | None = Non
     manifest.review_items = []
     manifest.printable_pages = []
 
-    pdf_files = _collect_pdf_files(manifest.source_paths)
+    source_files = _collect_supported_files(manifest.source_paths)
 
-    for file_path in pdf_files:
+    for file_path in source_files:
+        if file_path.suffix.lower() in {".doc", ".docx"}:
+            copied_path = custom_review_dir / file_path.name
+            shutil.copy2(file_path, copied_path)
+            manifest.review_items.append(
+                ReviewItem(
+                    bucket="CUSTOM_REVIEW",
+                    file_original_name=file_path.name,
+                    file_original_path=str(file_path),
+                    reason="NON_PDF_SOURCE_REVIEW",
+                )
+            )
+            continue
+
         analysis = analyze_pdf(file_path)
 
         if analysis.decision in ("A4_REVIEW", "CUSTOM_REVIEW"):

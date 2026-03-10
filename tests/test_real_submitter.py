@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pypdf import PdfWriter
+
 from print_dispatch.domain.models import PrintablePage
 from print_dispatch.execute.real_submitter import RealSubmitter
 
@@ -31,4 +33,24 @@ def test_single_page_path_finds_file_in_temp_subfolders(tmp_path):
 
 def test_long_profile_uses_long_engine_by_default(tmp_path):
     submitter = RealSubmitter(temp_dir=tmp_path)
-    assert submitter.long_engine == "RAW"
+    assert submitter.long_engine == "AUTO"
+
+
+def test_sumatra_print_settings_portrait(tmp_path):
+    pdf = tmp_path / "portrait.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=72.0, height=144.0)
+    with pdf.open("wb") as f:
+        writer.write(f)
+
+    assert RealSubmitter._sumatra_print_settings(pdf) == "noscale,portrait"
+
+
+def test_sumatra_print_settings_landscape(tmp_path):
+    pdf = tmp_path / "landscape.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=144.0, height=72.0)
+    with pdf.open("wb") as f:
+        writer.write(f)
+
+    assert RealSubmitter._sumatra_print_settings(pdf) == "noscale,landscape"

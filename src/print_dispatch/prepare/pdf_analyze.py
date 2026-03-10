@@ -18,6 +18,7 @@ A4_W = 210.0
 A4_H = 297.0
 A3_W = 297.0
 A3_H = 420.0
+A3_MAX_LEN_MM = 430.0
 SUPPORTED_WIDTHS = (297, 420, 594, 841)
 
 ReviewBucket = Literal["A4_REVIEW", "CUSTOM_REVIEW"]
@@ -86,7 +87,9 @@ def _classify_page(page_number: int, width_mm_raw: float, height_mm_raw: float) 
             rotation_required=rotation_required,
         )
 
-    if _is_close(width_mm, A3_W, A3_TOLERANCE_MM) and _is_close(length_mm, A3_H, A3_TOLERANCE_MM):
+    if _is_close(width_mm, A3_W, A3_TOLERANCE_MM) and (
+        _is_close(length_mm, A3_H, A3_TOLERANCE_MM) or length_mm <= A3_MAX_LEN_MM
+    ):
         return PageAnalysis(
             page_number=page_number,
             width_mm_raw=width_mm_raw,

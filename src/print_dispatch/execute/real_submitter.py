@@ -8,6 +8,8 @@ import subprocess
 from pathlib import Path
 from typing import Literal
 
+from pypdf import PdfReader
+
 from ..domain.models import PrintablePage
 
 RealEngine = Literal["SUMATRA", "RAW", "AUTO"]
@@ -18,7 +20,7 @@ class RealSubmitter:
         self.temp_dir = Path(temp_dir)
         self.sumatra_path = self._resolve_sumatra_path(sumatra_path)
         self.engine: RealEngine = engine or os.getenv("PRINT_DISPATCH_REAL_ENGINE", "SUMATRA").upper()  # type: ignore[assignment]
-        self.long_engine: RealEngine = os.getenv("PRINT_DISPATCH_LONG_ENGINE", "RAW").upper()  # type: ignore[assignment]
+        self.long_engine: RealEngine = os.getenv("PRINT_DISPATCH_LONG_ENGINE", "AUTO").upper()  # type: ignore[assignment]
 
     @staticmethod
     def _resolve_sumatra_path(explicit_path: str | Path | None) -> Path | None:
@@ -86,12 +88,13 @@ class RealSubmitter:
             raise RuntimeError(
                 "SumatraPDF not found. Set PRINT_DISPATCH_SUMATRA_PATH or add SumatraPDF to PATH."
             )
+        print_settings = self._sumatra_print_settings(source_pdf)
         command = [
             str(self.sumatra_path),
             "-print-to",
             page.target_queue,
             "-print-settings",
-            "noscale",
+            print_settings,
             "-silent",
             str(source_pdf),
         ]
@@ -101,6 +104,19 @@ class RealSubmitter:
             stdout = (result.stdout or "").strip()
             details = stderr or stdout or f"exit={result.returncode}"
             raise RuntimeError(f"Sumatra submit failed for {source_pdf}: {details}")
+
+    @staticmethod
+    def _sumatra_print_settings(source_pdf: Path) -> str:
+        orientation = "portrait"
+        try:
+            page = PdfReader(str(source_pdf)).pages[0]
+            width = float(page.mediabox.width)
+            height = float(page.mediabox.height)
+            orientation = "landscape" if width > height else "portrait"
+        except Exception:
+            orientation = "portrait"
+        # Keep true size (100%) and force orientation to prevent driver auto-rotation clipping.
+        return f"noscale,{orientation}"
 
     def _submit_with_engine(self, engine: RealEngine, page: PrintablePage, source_pdf: Path) -> None:
         if engine == "SUMATRA":

@@ -150,7 +150,10 @@ def _collect_dispatch_errors(manifest: Manifest) -> list[str]:
     errors: list[str] = []
     for group in manifest.groups:
         if group.status == "FAILED":
-            errors.append(f"{group.group_id}: {group.last_error or 'UNKNOWN_ERROR'}")
+            errors.append(f"{group.group_id}: {group.last_error or 'FAILED_WITHOUT_MESSAGE'}")
+        elif group.status not in {"COMPLETED", "EXECUTING"}:
+            detail = group.last_error or f"status={group.status}"
+            errors.append(f"{group.group_id}: {detail}")
     return errors
 
 
@@ -159,6 +162,23 @@ def _latest_execution_error(manifest: Manifest) -> str | None:
         if attempt.result == "FAIL" and attempt.error:
             return f"{attempt.target}: {attempt.error}"
     return None
+
+
+def _diagnostic_lines(manifest: Manifest) -> list[str]:
+    lines: list[str] = []
+    lines.append(f"state={manifest.state}")
+    lines.append(f"groups={len(manifest.groups)} printable_pages={len(manifest.printable_pages)}")
+    for group in manifest.groups:
+        lines.append(
+            f"group={group.group_id} status={group.status} queue={group.target_queue} "
+            f"last_error={group.last_error or '-'} items={len(group.item_refs)}"
+        )
+    tail = manifest.execution_attempts[-5:]
+    if tail:
+        lines.append("recent_attempts:")
+        for att in tail:
+            lines.append(f"{att.timestamp} | {att.target} | {att.result} | {att.error or '-'}")
+    return lines
 
 
 def _run_dispatch(
@@ -178,6 +198,8 @@ def _run_dispatch(
         return True, []
 
     errors = _collect_dispatch_errors(manifest)
+    if not errors:
+        errors = ["NOT_COMPLETED_GROUPS_WITHOUT_ERROR"]
     _persist_manifest(manifest)
     return False, errors
 
@@ -398,9 +420,15 @@ def _render_order_card(manifest: Manifest) -> None:
             st.caption(" | ".join(details))
         elif manifest.state == "W_TRAKCIE":
             latest = _latest_execution_error(manifest)
+            pending_groups = [g for g in manifest.groups if g.status != "COMPLETED"]
+            if pending_groups:
+                st.warning("Zlecenie nie jest ukończone. Statusy grup:")
+                st.caption(" | ".join(f"{g.group_id}: {g.status}" for g in pending_groups[:3]))
             if latest:
-                st.warning("Ostatni błąd wykonania:")
-                st.caption(latest)
+                st.caption(f"Ostatni błąd: {latest}")
+        if manifest.state == "W_TRAKCIE":
+            with st.expander("Diagnostyka druku", expanded=False):
+                st.code("\n".join(_diagnostic_lines(manifest)))
         st.selectbox(
             "Preferowany ploter (297)",
             options=PREFER_297_OPTIONS,

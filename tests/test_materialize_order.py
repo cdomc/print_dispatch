@@ -137,3 +137,39 @@ def test_materialize_order_places_long_pages_in_size_subfolder(tmp_path):
 
     assert (temp_dir / "LONG_297").exists()
     assert any((temp_dir / "LONG_297").glob("long_ok__p*.pdf"))
+
+
+def test_materialize_order_accepts_pdf_and_word_skips_other_files(tmp_path):
+    input_dir = tmp_path / "in_mixed"
+    input_dir.mkdir(parents=True)
+
+    pdf_file = input_dir / "ok.pdf"
+    docx_file = input_dir / "note.docx"
+    txt_file = input_dir / "skip.txt"
+
+    _make_pdf(pdf_file, [(297, 420)])
+    docx_file.write_bytes(b"fake-docx")
+    txt_file.write_text("ignore me", encoding="utf-8")
+
+    persistent_dir = tmp_path / "persistent_mixed"
+    temp_dir = tmp_path / "temp_mixed"
+    manifest = Manifest(
+        order_id="order-mixed",
+        received_time="2026-03-10 10:00:00",
+        source_type="MANUAL",
+        source_paths=[str(input_dir)],
+        source_ref="manual:20260310100000",
+        person="Ręczne",
+        topic="Mixed",
+        copies_default=1,
+        persistent_dir=str(persistent_dir),
+        temp_dir=str(temp_dir),
+    )
+
+    result = materialize_order(manifest)
+
+    assert len(result.printable_pages) == 1
+    assert result.printable_pages[0].file_original_name == "ok.pdf"
+    assert (persistent_dir / "CUSTOM_REVIEW" / "note.docx").exists()
+    assert not (persistent_dir / "CUSTOM_REVIEW" / "skip.txt").exists()
+    assert not any(item.file_original_name == "skip.txt" for item in result.review_items)
